@@ -32,20 +32,19 @@ resource "aws_internet_gateway" "igw" {
 
 resource "aws_route_table" "public_route_table" {
   vpc_id = aws_vpc.eks_vpc.id
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
   tags = {
     Name = "public-route-table"
   }
 }
 
-resource "aws_route" "public_route" {
-  route_table_id         = aws_route_table.public_route_table.id
-  destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.igw.id
-}
 
 resource "aws_route_table_association" "public_subnet_association" {
   count          = 3
-  subnet_id      = aws_subnet.public_subnet[count.index].id
+  subnet_id      = element(aws_subnet.public_subnet.*.id,count.index)
   route_table_id = aws_route_table.public_route_table.id
 }
 
@@ -87,25 +86,12 @@ resource "aws_security_group" "eks_sg" {
   description = "Allow inbound traffic for EKS cluster and node group"
   vpc_id      = aws_vpc.eks_vpc.id
 
+  
   ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
+    from_port = 0
+    to_port = 0
     cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 10250
-    to_port     = 10250
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    protocol = "-1"
   }
 
   egress {
@@ -137,13 +123,24 @@ resource "aws_key_pair" "eks_key" {
   public_key = file("~/.ssh/id_rsa.pub")
 }
 
+resource "aws_launch_template" "eks_launch_template" {
+  name_prefix   = "eks-launch-template-"
+  instance_type = "t3.medium"
+  key_name      = aws_key_pair.eks_key.key_name  
+image_id = "ami-0ca9fb66e076a6e32"
+}
 resource "aws_eks_node_group" "eks_node_group" {
   cluster_name    = aws_eks_cluster.eks_cluster.name
   node_group_name = "eks-node-group"
   node_role_arn   = aws_iam_role.eks_role.arn
   subnet_ids      = aws_subnet.public_subnet[*].id
   
-
+ launch_template {
+   id = aws_launch_template.eks_launch_template.id
+   version = "$Latest"
+ }
+  
+   
   scaling_config {
     desired_size = 2
     max_size     = 3
@@ -153,6 +150,8 @@ resource "aws_eks_node_group" "eks_node_group" {
   instance_types = ["t3.medium"]
   ami_type       = "AL2_x86_64"
   disk_size      = 20
+
+  
 
   depends_on = [aws_eks_cluster.eks_cluster]
 }
